@@ -59,7 +59,35 @@ install: release ## Instala o binário no sistema
 	@echo "$(GREEN)Instalando $(BINARY_NAME)...$(NC)"
 	cargo install --path .
 
-# Comandos de exemplo
+debug-paths: ## Mostra onde o programa procura pelos arquivos
+	@echo "$(GREEN)Caminhos de busca para arquivos:$(NC)"
+	@echo "$(YELLOW)Diretório atual:$(NC) $(pwd)"
+	@echo "$(YELLOW)Executável:$(NC) ./target/release/tcx_image_overlay"
+	@echo "$(YELLOW)Estrutura atual:$(NC)"
+	@find . -name "*.png" -o -name "*.ttf" | head -10
+	@echo "$(YELLOW)Testando busca de marcas d'água:$(NC)"
+	@if [ -f "img/garmin_white.png" ]; then \
+		echo "$(GREEN)✅ img/garmin_white.png encontrada$(NC)"; \
+	else \
+		echo "$(RED)❌ img/garmin_white.png NÃO encontrada$(NC)"; \
+	fi
+	@if [ -f "img/garmin_black.png" ]; then \
+		echo "$(GREEN)✅ img/garmin_black.png encontrada$(NC)"; \
+	else \
+		echo "$(RED)❌ img/garmin_black.png NÃO encontrada$(NC)"; \
+	fi
+
+# Comando de teste com debug extra
+run-debug: release ## Executa com informações de debug
+	@echo "$(GREEN)Executando com debug de caminhos...$(NC)"
+	@echo "$(YELLOW)Diretório atual: $(pwd)$(NC)"
+	@echo "$(YELLOW)Listando arquivos em img/:$(NC)"
+	@ls -la img/ 2>/dev/null || echo "$(RED)Diretório img/ não existe$(NC)"
+	@if [ -f "exemplo.jpg" ] && [ -f "exemplo.tcx" ]; then \
+		./target/release/tcx_image_overlay --image-path exemplo.jpg --activity-path exemplo.tcx --output-path debug_result.png; \
+	else \
+		echo "$(RED)Erro: Arquivos exemplo.jpg e exemplo.tcx necessários para teste$(NC)"; \
+	fi
 run-example: ## Executa um exemplo (requer arquivos de teste)
 	@echo "$(GREEN)Executando exemplo...$(NC)"
 	@if [ -f "exemplo.jpg" ] && [ -f "exemplo.tcx" ]; then \
@@ -79,18 +107,52 @@ run-fit-example: ## Executa exemplo com arquivo FIT
 	fi
 
 # Setup do ambiente
-setup-fonts: ## Verifica e cria estrutura de fontes
-	@echo "$(GREEN)Verificando estrutura de fontes...$(NC)"
+setup-fonts: ## Verifica e cria estrutura de fontes e marcas d'água
+	@echo "$(GREEN)Verificando estrutura de arquivos...$(NC)"
 	@mkdir -p fonts img
+	@echo "$(YELLOW)=== FONTES ===$(NC)"
 	@if [ ! -f "fonts/DejaVuSans.ttf" ]; then \
-		echo "$(YELLOW)Aviso: fonts/DejaVuSans.ttf não encontrada$(NC)"; \
-		echo "$(YELLOW)Baixe de: https://dejavu-fonts.github.io/$(NC)"; \
+		echo "$(RED)❌ fonts/DejaVuSans.ttf não encontrada$(NC)"; \
+		echo "$(YELLOW)   Baixe de: https://dejavu-fonts.github.io/$(NC)"; \
+	else \
+		echo "$(GREEN)✅ fonts/DejaVuSans.ttf$(NC)"; \
 	fi
 	@if [ ! -f "fonts/FontAwesome.ttf" ]; then \
-		echo "$(YELLOW)Aviso: fonts/FontAwesome.ttf não encontrada$(NC)"; \
-		echo "$(YELLOW)Baixe de: https://fontawesome.com/$(NC)"; \
+		echo "$(RED)❌ fonts/FontAwesome.ttf não encontrada$(NC)"; \
+		echo "$(YELLOW)   Baixe de: https://fontawesome.com/$(NC)"; \
+	else \
+		echo "$(GREEN)✅ fonts/FontAwesome.ttf$(NC)"; \
 	fi
-	@echo "$(GREEN)Estrutura de diretórios criada!$(NC)"
+	@echo "$(YELLOW)=== MARCAS D'ÁGUA ===$(NC)"
+	@if [ ! -f "img/garmin_white.png" ]; then \
+		echo "$(RED)❌ img/garmin_white.png não encontrada$(NC)"; \
+		echo "$(YELLOW)   Veja setup_watermarks.md para instruções$(NC)"; \
+	else \
+		echo "$(GREEN)✅ img/garmin_white.png$(NC)"; \
+	fi
+	@if [ ! -f "img/garmin_black.png" ]; then \
+		echo "$(RED)❌ img/garmin_black.png não encontrada$(NC)"; \
+		echo "$(YELLOW)   Veja setup_watermarks.md para instruções$(NC)"; \
+	else \
+		echo "$(GREEN)✅ img/garmin_black.png$(NC)"; \
+	fi
+	@echo "$(GREEN)Verificação concluída!$(NC)"
+
+check-files: setup-fonts ## Alias para setup-fonts
+
+create-sample-watermarks: ## Cria marcas d'água de exemplo (requer ImageMagick)
+	@echo "$(GREEN)Criando marcas d'água de exemplo...$(NC)"
+	@mkdir -p img
+	@if command -v convert >/dev/null 2>&1; then \
+		convert -size 200x50 xc:transparent -font Arial -pointsize 24 -fill white -gravity center -annotate +0+0 "GARMIN" img/garmin_white.png 2>/dev/null || echo "$(YELLOW)Erro ao criar marca d'água branca$(NC)"; \
+		convert -size 200x50 xc:transparent -font Arial -pointsize 24 -fill black -gravity center -annotate +0+0 "GARMIN" img/garmin_black.png 2>/dev/null || echo "$(YELLOW)Erro ao criar marca d'água preta$(NC)"; \
+		echo "$(GREEN)✅ Marcas d'água de exemplo criadas!$(NC)"; \
+	else \
+		echo "$(RED)ImageMagick não encontrado. Instale com:$(NC)"; \
+		echo "$(YELLOW)  Ubuntu/Debian: sudo apt install imagemagick$(NC)"; \
+		echo "$(YELLOW)  macOS: brew install imagemagick$(NC)"; \
+		echo "$(YELLOW)  Ou veja setup_watermarks.md para outras opções$(NC)"; \
+	fi
 
 # Comandos de desenvolvimento
 dev: ## Modo de desenvolvimento com watch
