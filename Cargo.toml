@@ -1,0 +1,55 @@
+# ============================================================================
+# Cargo.toml - Configuração do projeto e dependências
+# ============================================================================
+
+[package]
+name = "tcx_image_overlay"
+version = "1.0.0"
+authors = ["Paulo <paulo@example.com>"]
+edition = "2021"
+description = "Ferramenta para adicionar overlay de estatísticas de treino em imagens"
+license = "MIT"
+repository = "https://github.com/usuario/tcx_image_overlay"
+keywords = ["tcx", "fit", "garmin", "image", "overlay"]
+categories = ["multimedia::images", "command-line-utilities"]
+
+[[bin]]
+name = "tcx_image_overlay"
+path = "src/main.rs"
+
+[dependencies]
+# Interface de linha de comando
+clap = { version = "4.0", features = ["derive"] }
+
+# Manipulação de datas e tempo
+chrono = { version = "0.4", features = ["serde"] }
+
+# Processamento de imagens
+image = "0.24"
+imageproc = "0.23"
+rusttype = "0.9"
+
+# Serialização e desserialização
+serde = { version = "1.0", features = ["derive"] }
+
+# Parser XML para arquivos TCX
+quick-xml = { version = "0.30", features = ["serialize"] }
+
+# Parser para arquivos FIT
+fitparser = "0.10.0"
+
+[dev-dependencies]
+# Para testes
+tempfile = "3.0"
+
+[profile.release]
+# Otimizações para release
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+# Configurações para desenvolvimento
+opt-level = 0
+debug = true
