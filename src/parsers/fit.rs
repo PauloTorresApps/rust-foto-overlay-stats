@@ -36,17 +36,28 @@ pub fn parse_fit(path: &PathBuf) -> AppResult<ActivityData> {
                 println!("🔍 [FIT DEBUG] Registro de DeviceInfo encontrado");
                 for field in record.fields() {
                     println!("   Campo: {} = {:?}", field.name(), field.value());
+                    
+                    // Prioriza product_name se disponível
                     if field.name() == "product_name" {
                         if let Value::String(name) = field.value() {
                             device_name = name.clone();
-                            println!("✅ [FIT DEBUG] Nome do dispositivo encontrado: '{}'", device_name);
+                            println!("✅ [FIT DEBUG] Nome do produto encontrado: '{}'", device_name);
                         }
                     }
-                    // Tentar outros campos que podem conter o nome do dispositivo
-                    if field.name() == "manufacturer" && device_name == "Dispositivo desconhecido" {
+                    // Se não tem product_name, tenta manufacturer + product_name combinados
+                    else if field.name() == "manufacturer" {
                         if let Value::String(manufacturer) = field.value() {
-                            device_name = manufacturer.clone();
-                            println!("✅ [FIT DEBUG] Fabricante encontrado: '{}'", device_name);
+                            if device_name == "Dispositivo desconhecido" {
+                                device_name = manufacturer.clone();
+                                println!("🔍 [FIT DEBUG] Fabricante encontrado: '{}'", device_name);
+                            }
+                        }
+                    }
+                    // Outros campos que podem ter informações úteis
+                    else if field.name() == "device_type" && device_name == "Dispositivo desconhecido" {
+                        if let Value::String(dev_type) = field.value() {
+                            device_name = dev_type.clone();
+                            println!("🔍 [FIT DEBUG] Tipo de dispositivo encontrado: '{}'", device_name);
                         }
                     }
                 }
@@ -55,7 +66,7 @@ pub fn parse_fit(path: &PathBuf) -> AppResult<ActivityData> {
         }
     }
 
-    println!("🎯 [FIT DEBUG] Nome final do dispositivo: '{}'", device_name);
+    println!("🎯 [FIT DEBUG] Nome final do dispositivo antes da normalização: '{}'", device_name);
 
     // Verifica se encontrou dados de sessão
     let session = session_data.ok_or_else(|| 
@@ -75,8 +86,8 @@ pub fn parse_fit(path: &PathBuf) -> AppResult<ActivityData> {
             "Campo 'start_time' não encontrado no arquivo FIT".to_string())),
     };
 
-    // Constrói e retorna os dados da atividade
-    Ok(ActivityData {
+    // Constrói os dados da atividade
+    let mut activity_data = ActivityData {
         total_time_seconds: get_field("total_elapsed_time").map_or(0.0, |v| match v {
             Value::Float64(val) => val,
             Value::Float32(val) => val as f64,
@@ -100,5 +111,11 @@ pub fn parse_fit(path: &PathBuf) -> AppResult<ActivityData> {
         }),
         start_time: start_time.into(),
         device_name,
-    })
+    };
+
+    // Normaliza o nome do dispositivo
+    activity_data.normalize_device_name();
+    println!("FIT - Nome do dispositivo normalizado: '{}'", activity_data.device_name);
+
+    Ok(activity_data)
 }

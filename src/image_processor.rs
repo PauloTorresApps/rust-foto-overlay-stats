@@ -39,6 +39,8 @@ impl ImageProcessor {
         println!("Carregando imagem: {:?}", image_path);
         let image = image::open(image_path)?.to_rgba8();
         let (width, height) = image.dimensions();
+        
+        println!("📐 [DEBUG] Dimensões da imagem carregada: {}x{}", width, height);
 
         println!("Carregando fontes...");
         let font = Self::load_font(FONT_PATH)?;
@@ -129,15 +131,23 @@ impl ImageProcessor {
 
     /// Adiciona o overlay de estatísticas à imagem
     fn add_overlay(&mut self, activity_data: &ActivityData) -> AppResult<()> {
+        println!("📐 [DEBUG] Iniciando overlay - Dimensões atuais da imagem: {}x{}", self.width, self.height);
+        
         let font_scale = (self.height as f32 / 40.0).round();
         let scale = Scale::uniform(font_scale);
         let shadow_offset = (font_scale / 15.0).round().max(1.0) as i32;
+
+        println!("📐 [DEBUG] Font scale calculado: {}", font_scale);
+        println!("📐 [DEBUG] Shadow offset: {}", shadow_offset);
 
         // Criamos as linhas de estatísticas usando função estática
         let stats_lines = Self::build_stats_lines_static(activity_data);
         
         // Calculamos o layout usando dados temporários
         let layout = self.calculate_layout(&stats_lines, scale, font_scale);
+        
+        println!("📐 [DEBUG] Layout calculado - max_width: {}, total_height: {}", 
+                 layout.max_line_width, layout.total_text_height);
         
         // Verificamos se é Garmin
         let is_garmin = Self::is_garmin_device_static(&activity_data.device_name);
@@ -149,6 +159,8 @@ impl ImageProcessor {
 
         // Desenha as estatísticas
         self.draw_stats(&stats_lines, &layout, scale, shadow_offset);
+
+        println!("📐 [DEBUG] Overlay concluído - Dimensões finais da imagem: {}x{}", self.width, self.height);
 
         Ok(())
     }
@@ -261,18 +273,18 @@ impl ImageProcessor {
             return Ok(());
         }
 
-        // AJUSTE: Posicionamento específico conforme solicitado
-        let margin_right = 10i32; // 10px da borda direita
-        let watermark_bottom_margin = 10; // Marca d'água fica a 10px da borda inferior (antes era 5px)
+        // AJUSTE: Posicionamento dentro da área visível da imagem
+        let margin_right = 5i32; // -10px (move para dentro da borda direita)
+        let watermark_bottom_margin = 10; // -10px (move para dentro da borda inferior)
         
         // As estatísticas já estão posicionadas corretamente pelo layout
         let block_x_start = (self.width as i32) - (layout.max_line_width) - 20i32; // Mantém margin original para stats
         
         println!("🎯 [DEBUG] Posições calculadas: block_x={}", block_x_start);
         
-        let watermark_x = (self.width as i32 - temp_watermark_width as i32 - margin_right) as u32;
-        // AJUSTE: Marca d'água fica a 10px da borda inferior
-        let watermark_y = self.height - watermark_height - watermark_bottom_margin;
+        let watermark_x = (self.width as i32 - temp_watermark_width as i32 + margin_right) as u32;
+        // AJUSTE: Marca d'água fica próxima da borda inferior (valor negativo = mais próximo)
+        let watermark_y = (self.height as i32 - watermark_height as i32 + watermark_bottom_margin) as u32;
 
         println!("🎯 [DEBUG] Posição final da marca d'água: x={}, y={}", watermark_x, watermark_y);
         println!("🎯 [DEBUG] Dimensões da imagem: {}x{}", self.width, self.height);
@@ -372,6 +384,7 @@ impl ImageProcessor {
 
     /// Salva a imagem processada
     pub fn save_result(&self) -> AppResult<()> {
+        println!("📐 [DEBUG] Salvando imagem - Dimensões antes do salvamento: {}x{}", self.width, self.height);
         println!("Salvando imagem final em: {:?}", self.output_path);
         
         // Verifica se o diretório pai existe
@@ -389,8 +402,18 @@ impl ImageProcessor {
             ));
         }
         
+        // Log das dimensões da imagem antes de salvar
+        let (final_width, final_height) = self.image.dimensions();
+        println!("📐 [DEBUG] Dimensões da imagem no buffer: {}x{}", final_width, final_height);
+        
         self.image.save(&self.output_path)
             .map_err(|e| AppError::ImageError(e))?;
+        
+        // Verificar o arquivo salvo
+        if let Ok(saved_img) = image::open(&self.output_path) {
+            let (saved_w, saved_h) = saved_img.dimensions();
+            println!("📐 [DEBUG] Dimensões da imagem salva: {}x{}", saved_w, saved_h);
+        }
         
         println!("✅ Imagem salva com sucesso!");
         Ok(())

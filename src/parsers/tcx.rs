@@ -67,12 +67,18 @@ pub fn parse_tcx(path: &PathBuf) -> AppResult<ActivityData> {
     let lap = &tcx_data.activities.activity.lap;
     let creator = &tcx_data.activities.activity.creator;
 
-    Ok(ActivityData {
+    let mut activity_data = ActivityData {
         total_time_seconds: lap.total_time_seconds,
         calories: lap.calories,
         avg_hr: lap.avg_hr.value,
         max_hr: lap.max_hr.value,
         start_time: lap.start_time,
         device_name: creator.name.clone(),
-    })
+    };
+
+    // Normaliza o nome do dispositivo
+    activity_data.normalize_device_name();
+    println!("TCX - Nome do dispositivo normalizado: '{}'", activity_data.device_name);
+
+    Ok(activity_data)
 }
