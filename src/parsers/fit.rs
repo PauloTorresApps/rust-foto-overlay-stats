@@ -23,17 +23,30 @@ pub fn parse_fit(path: &PathBuf) -> AppResult<ActivityData> {
         records.push(record);
     }
 
+    println!("🔍 [FIT DEBUG] Total de registros encontrados: {}", records.len());
+
     // Processa os registros para encontrar Session e DeviceInfo
     for record in records {
         match record.kind() {
             fitparser::profile::MesgNum::Session => {
+                println!("✅ [FIT DEBUG] Registro de sessão encontrado");
                 session_data = Some(record);
             }
             fitparser::profile::MesgNum::DeviceInfo => {
+                println!("🔍 [FIT DEBUG] Registro de DeviceInfo encontrado");
                 for field in record.fields() {
+                    println!("   Campo: {} = {:?}", field.name(), field.value());
                     if field.name() == "product_name" {
                         if let Value::String(name) = field.value() {
                             device_name = name.clone();
+                            println!("✅ [FIT DEBUG] Nome do dispositivo encontrado: '{}'", device_name);
+                        }
+                    }
+                    // Tentar outros campos que podem conter o nome do dispositivo
+                    if field.name() == "manufacturer" && device_name == "Dispositivo desconhecido" {
+                        if let Value::String(manufacturer) = field.value() {
+                            device_name = manufacturer.clone();
+                            println!("✅ [FIT DEBUG] Fabricante encontrado: '{}'", device_name);
                         }
                     }
                 }
@@ -41,6 +54,8 @@ pub fn parse_fit(path: &PathBuf) -> AppResult<ActivityData> {
             _ => {} // Ignora outros tipos de mensagem
         }
     }
+
+    println!("🎯 [FIT DEBUG] Nome final do dispositivo: '{}'", device_name);
 
     // Verifica se encontrou dados de sessão
     let session = session_data.ok_or_else(|| 

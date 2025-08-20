@@ -44,14 +44,52 @@ impl ImageProcessor {
         let font = Self::load_font(FONT_PATH)?;
         let icon_font = Self::load_font(ICON_FONT_PATH)?;
 
+        // Gera automaticamente o caminho de saída baseado na imagem original
+        let auto_output_path = Self::generate_output_path(image_path)?;
+
         Ok(Self {
             image,
             width,
             height,
             font,
             icon_font,
-            output_path: PathBuf::from(DEFAULT_OUTPUT_PATH),
+            output_path: auto_output_path,
         })
+    }
+
+    /// Gera automaticamente o caminho de saída profissional
+    fn generate_output_path(image_path: &PathBuf) -> AppResult<PathBuf> {
+        use chrono::Local;
+        
+        // Obter diretório home do usuário
+        let home_dir = dirs::home_dir()
+            .ok_or_else(|| AppError::InvalidFormat("Não foi possível determinar o diretório home do usuário".to_string()))?;
+        
+        // Criar estrutura: ~/stats_overlay/YYYY-MM-DD/
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let output_dir = home_dir.join("stats_overlay").join(&today);
+        
+        // Criar diretórios se não existirem
+        std::fs::create_dir_all(&output_dir)?;
+        
+        // Gerar nome do arquivo: nome-original-stats-overlay.ext
+        let original_filename = image_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| AppError::InvalidFormat("Nome de arquivo inválido".to_string()))?;
+            
+        let original_extension = image_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("jpg"); // Default para jpg se não tiver extensão
+            
+        let new_filename = format!("{}-stats-overlay.{}", original_filename, original_extension);
+        let output_path = output_dir.join(&new_filename);
+        
+        println!("📁 Diretório de saída: {:?}", output_dir);
+        println!("📄 Arquivo de saída: {}", new_filename);
+        
+        Ok(output_path)
     }
 
     /// Carrega uma fonte a partir do caminho especificado
@@ -148,6 +186,7 @@ impl ImageProcessor {
         let text_line_height = font_scale as u32 + (padding / 2);
         let total_text_height = stats_lines.len() as u32 * text_line_height;
         let margin = 4;
+        let stats_bottom_margin = 80; // Estatísticas ficam a 80px da borda inferior (50px + 30px)
 
         OverlayLayout {
             max_line_width,
@@ -155,186 +194,154 @@ impl ImageProcessor {
             text_line_height,
             total_text_height,
             block_x_start: (self.width as i32) - max_line_width - (margin as i32),
-            block_y_start: (self.height - total_text_height - margin) as i32,
+            block_y_start: (self.height - total_text_height - stats_bottom_margin) as i32,
         }
     }
 
     /// Verifica se o dispositivo é da marca Garmin (versão estática)
     fn is_garmin_device_static(device_name: &str) -> bool {
+        println!("🔍 [GARMIN DEBUG] Verificando dispositivo: '{}'", device_name);
         let device_name_lower = device_name.to_lowercase();
-        GARMIN_SERIES.iter().any(|&series| device_name_lower.contains(series))
+        println!("🔍 [GARMIN DEBUG] Nome em minúsculas: '{}'", device_name_lower);
+        
+        for series in GARMIN_SERIES {
+            if device_name_lower.contains(series) {
+                println!("✅ [GARMIN DEBUG] Dispositivo Garmin detectado! Contém: '{}'", series);
+                return true;
+            }
+        }
+        
+        println!("❌ [GARMIN DEBUG] Dispositivo NÃO é Garmin");
+        println!("🔍 [GARMIN DEBUG] Séries verificadas: {:?}", GARMIN_SERIES);
+        false
     }
 
-    /// Adiciona marca d'água para dispositivos Garmin
+    /// Adiciona marca d'água para dispositivos Garmin (lógica original restaurada)
     fn add_watermark(&mut self, layout: &OverlayLayout) -> AppResult<()> {
-        println!("🎯 Dispositivo Garmin detectado. Processando marca d'água...");
-        println!("📁 Diretório atual: {:?}", std::env::current_dir().unwrap_or_default());
+        println!("🎯 [DEBUG] Iniciando processo de marca d'água");
+        println!("🎯 [DEBUG] Layout recebido: max_width={}, total_height={}", layout.max_line_width, layout.total_text_height);
         
-        // Primeiro, vamos listar o que existe no diretório img
-        if let Ok(entries) = std::fs::read_dir("img") {
-            println!("📂 Conteúdo do diretório img/:");
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    println!("   - {:?}", entry.file_name());
+        println!("Dispositivo Garmin detectado. Analisando fundo para a marca d'água.");
+
+        let temp_watermark_width = layout.max_line_width as u32;
+        println!("🎯 [DEBUG] Largura da marca d'água: {}", temp_watermark_width);
+
+        println!("🎯 [DEBUG] Tentando abrir: {}", WATERMARK_WHITE_PATH);
+        let (wm_orig_w, wm_orig_h) = match image::open(WATERMARK_WHITE_PATH) {
+            Ok(img) => {
+                let dims = img.dimensions();
+                println!("✅ [DEBUG] {} aberto com sucesso: {}x{}", WATERMARK_WHITE_PATH, dims.0, dims.1);
+                dims
+            },
+            Err(e) => {
+                println!("❌ [DEBUG] Erro ao abrir {}: {}", WATERMARK_WHITE_PATH, e);
+                println!("🎯 [DEBUG] Tentando abrir: {}", WATERMARK_BLACK_PATH);
+                match image::open(WATERMARK_BLACK_PATH) {
+                    Ok(img) => {
+                        let dims = img.dimensions();
+                        println!("✅ [DEBUG] {} aberto com sucesso: {}x{}", WATERMARK_BLACK_PATH, dims.0, dims.1);
+                        dims
+                    },
+                    Err(e2) => {
+                        println!("❌ [DEBUG] Erro ao abrir {}: {}", WATERMARK_BLACK_PATH, e2);
+                        println!("🚫 [DEBUG] NENHUMA marca d'água encontrada - retornando");
+                        (1, 1)
+                    }
                 }
             }
-        } else {
-            println!("❌ Diretório img/ não existe ou não pode ser lido");
-        }
-
-        let watermark_width = layout.max_line_width as u32;
-        println!("📏 Largura calculada para marca d'água: {}px", watermark_width);
-        
-        let watermark_height = Self::calculate_watermark_height(watermark_width)?;
-        println!("📐 Altura calculada para marca d'água: {}px", watermark_height);
-        
-        // Se não conseguiu calcular altura, significa que as imagens não existem
-        if watermark_height == 0 {
-            println!("⚠️  ERRO: Altura da marca d'água é 0 - imagens não encontradas");
-            return Ok(()); // Continua sem a marca d'água
-        }
-        
-        let watermark_x = layout.block_x_start as u32;
-        let watermark_y = layout.block_y_start as u32 + layout.total_text_height;
-        println!("📍 Posição da marca d'água: x={}, y={}", watermark_x, watermark_y);
-
-        let avg_luminance = self.calculate_background_luminance(
-            watermark_x, watermark_y, watermark_width, watermark_height
-        );
-        println!("💡 Luminância média do fundo: {:.1}", avg_luminance);
-
-        let watermark_filename = if avg_luminance < 128.0 {
-            println!("🌙 Fundo escuro detectado. Usando marca d'água branca.");
-            WATERMARK_WHITE_PATH
-        } else {
-            println!("☀️  Fundo claro detectado. Usando marca d'água preta.");
-            WATERMARK_BLACK_PATH
         };
 
-        // Usa a nova função para encontrar o arquivo
-        if let Some(watermark_path) = Self::find_watermark_file(watermark_filename) {
-            println!("🎨 Carregando marca d'água de: {:?}", watermark_path);
-            
-            match image::open(&watermark_path) {
-                Ok(watermark_img) => {
-                    let (orig_w, orig_h) = watermark_img.dimensions();
-                    println!("🖼️  Dimensões originais da marca d'água: {}x{}", orig_w, orig_h);
-                    
-                    let resized_watermark = imageops::resize(
-                        &watermark_img.to_rgba8(),
-                        watermark_width,
-                        watermark_height,
-                        imageops::FilterType::Lanczos3
-                    );
-                    println!("🔄 Redimensionada para: {}x{}", watermark_width, watermark_height);
-                    
-                    imageops::overlay(
-                        &mut self.image,
-                        &resized_watermark,
-                        watermark_x as i64,
-                        watermark_y as i64
-                    );
-                    
-                    println!("✅ Marca d'água adicionada com sucesso na posição ({}, {})!", watermark_x, watermark_y);
-                }
-                Err(e) => {
-                    println!("❌ Erro ao carregar marca d'água '{:?}': {}", watermark_path, e);
-                    println!("   Continuando sem marca d'água...");
-                }
-            }
-        } else {
-            println!("🚫 Nenhum arquivo de marca d'água encontrado para '{}'", watermark_filename);
+        println!("🎯 [DEBUG] Dimensões da marca d'água: {}x{}", wm_orig_w, wm_orig_h);
+
+        let watermark_height = if wm_orig_w > 0 { temp_watermark_width * wm_orig_h / wm_orig_w } else { 0 };
+        println!("🎯 [DEBUG] Altura calculada: {}", watermark_height);
+
+        if watermark_height == 0 {
+            println!("🚫 [DEBUG] Altura é 0 - saindo sem marca d'água");
+            return Ok(());
         }
 
-        Ok(())
-    }
-
-    /// Encontra o caminho correto para um arquivo de marca d'água
-    fn find_watermark_file(filename: &str) -> Option<PathBuf> {
-        println!("🔍 Procurando por: {}", filename);
+        // AJUSTE: Posicionamento específico conforme solicitado
+        let margin_right = 10i32; // 10px da borda direita
+        let watermark_bottom_margin = 10; // Marca d'água fica a 10px da borda inferior (antes era 5px)
         
-        // Lista de diretórios para procurar (em ordem de prioridade)
-        let mut search_paths = vec![
-            // 1. Caminho exato como especificado
-            PathBuf::from(filename),
-            // 2. Pasta img no diretório atual  
-            PathBuf::from("img").join(std::path::Path::new(filename).file_name().unwrap_or_default()),
-        ];
+        // As estatísticas já estão posicionadas corretamente pelo layout
+        let block_x_start = (self.width as i32) - (layout.max_line_width) - 20i32; // Mantém margin original para stats
+        
+        println!("🎯 [DEBUG] Posições calculadas: block_x={}", block_x_start);
+        
+        let watermark_x = (self.width as i32 - temp_watermark_width as i32 - margin_right) as u32;
+        // AJUSTE: Marca d'água fica a 10px da borda inferior
+        let watermark_y = self.height - watermark_height - watermark_bottom_margin;
 
-        // 3. Adiciona caminhos baseados no diretório atual (se disponível)
-        if let Ok(current_dir) = std::env::current_dir() {
-            search_paths.push(current_dir.join(filename));
-            search_paths.push(current_dir.join("img").join(std::path::Path::new(filename).file_name().unwrap_or_default()));
+        println!("🎯 [DEBUG] Posição final da marca d'água: x={}, y={}", watermark_x, watermark_y);
+        println!("🎯 [DEBUG] Dimensões da imagem: {}x{}", self.width, self.height);
+        println!("🎯 [DEBUG] Área da marca d'água: {}x{} na posição ({}, {})", temp_watermark_width, watermark_height, watermark_x, watermark_y);
+
+        // Verificação de bounds
+        if watermark_x >= self.width || watermark_y >= self.height {
+            println!("🚫 [DEBUG] Marca d'água fora dos limites da imagem!");
+            return Ok(());
         }
 
-        for (i, path) in search_paths.iter().enumerate() {
-            println!("   {}. Tentando: {:?}", i + 1, path);
-            if path.exists() {
-                println!("   ✅ ENCONTRADO em: {:?}", path);
-                return Some(path.clone());
-            } else {
-                println!("   ❌ Não existe");
-            }
-        }
-
-        println!("   🚫 Arquivo não encontrado em nenhum local");
-        None
-    }
-
-    /// Calcula a altura da marca d'água mantendo proporção
-    fn calculate_watermark_height(width: u32) -> AppResult<u32> {
-        println!("🔍 Calculando altura da marca d'água para largura: {}px", width);
-        
-        let files = [WATERMARK_WHITE_PATH, WATERMARK_BLACK_PATH];
-        
-        for filename in &files {
-            println!("   Tentando arquivo: {}", filename);
-            
-            if let Some(path) = Self::find_watermark_file(filename) {
-                println!("   Arquivo encontrado: {:?}", path);
-                
-                match image::open(&path) {
-                    Ok(img) => {
-                        let (orig_w, orig_h) = img.dimensions();
-                        let calculated_height = if orig_w > 0 { width * orig_h / orig_w } else { 0 };
-                        
-                        println!("   Dimensões originais: {}x{}", orig_w, orig_h);
-                        println!("   Altura calculada: {}", calculated_height);
-                        
-                        return Ok(calculated_height);
-                    }
-                    Err(e) => {
-                        println!("   ❌ Erro ao abrir imagem: {}", e);
-                    }
-                }
-            } else {
-                println!("   ❌ Arquivo não encontrado");
-            }
-        }
-        
-        println!("⚠️  Nenhuma marca d'água válida encontrada - retornando altura 0");
-        Ok(0)
-    }
-
-    /// Calcula a luminância média do fundo para escolher a marca d'água adequada
-    fn calculate_background_luminance(&self, x: u32, y: u32, width: u32, height: u32) -> f32 {
         let mut total_luminance = 0.0;
         let mut pixel_count = 0;
 
-        for px in x..(x + width) {
-            for py in y..(y + height) {
-                if px < self.width && py < self.height {
-                    let pixel = self.image.get_pixel(px, py);
-                    let luminance = 0.2126 * (pixel[0] as f32) 
-                                  + 0.7152 * (pixel[1] as f32) 
-                                  + 0.0722 * (pixel[2] as f32);
+        println!("🎯 [DEBUG] Analisando luminância da região: x={} a {}, y={} a {}", 
+                 watermark_x, watermark_x + temp_watermark_width, 
+                 watermark_y, watermark_y + watermark_height);
+
+        for x in watermark_x..(watermark_x + temp_watermark_width) {
+            for y in watermark_y..(watermark_y + watermark_height) {
+                if x < self.width && y < self.height {
+                    let pixel = self.image.get_pixel(x, y);
+                    let luminance = 0.2126 * (pixel[0] as f32) + 0.7152 * (pixel[1] as f32) + 0.0722 * (pixel[2] as f32);
                     total_luminance += luminance;
                     pixel_count += 1;
                 }
             }
         }
 
-        if pixel_count > 0 { total_luminance / pixel_count as f32 } else { 0.0 }
+        let avg_luminance = if pixel_count > 0 { total_luminance / pixel_count as f32 } else { 0.0 };
+        println!("🎯 [DEBUG] Luminância média: {:.1} (pixels analisados: {})", avg_luminance, pixel_count);
+        
+        let watermark_path_to_use = if avg_luminance < 128.0 {
+            println!("Fundo escuro detectado. Usando marca d'água branca.");
+            WATERMARK_WHITE_PATH
+        } else {
+            println!("Fundo claro detectado. Usando marca d'água preta.");
+            WATERMARK_BLACK_PATH
+        };
+
+        println!("🎯 [DEBUG] Tentando carregar marca d'água final: {}", watermark_path_to_use);
+
+        if let Ok(watermark_img_orig) = image::open(watermark_path_to_use) {
+            println!("✅ [DEBUG] Marca d'água carregada com sucesso!");
+            let watermark_img = watermark_img_orig.to_rgba8();
+            let resized_watermark = imageops::resize(
+                &watermark_img,
+                temp_watermark_width,
+                watermark_height,
+                imageops::FilterType::Lanczos3
+            );
+            
+            println!("🎯 [DEBUG] Marca d'água redimensionada para: {}x{}", temp_watermark_width, watermark_height);
+            println!("🎯 [DEBUG] Aplicando overlay na posição: ({}, {})", watermark_x, watermark_y);
+            
+            imageops::overlay(
+                &mut self.image,
+                &resized_watermark,
+                watermark_x as i64,
+                watermark_y as i64
+            );
+            
+            println!("✅ Marca d'água adicionada com sucesso!");
+        } else {
+            println!("❌ [DEBUG] FALHA ao abrir marca d'água final: {}", watermark_path_to_use);
+            println!("Aviso: Imagem da marca d'água não encontrada em '{}'.", watermark_path_to_use);
+        }
+
+        Ok(())
     }
 
     /// Desenha as estatísticas na imagem

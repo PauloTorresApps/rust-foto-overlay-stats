@@ -24,6 +24,9 @@ clap = { version = "4.0", features = ["derive"] }
 # Manipulação de datas e tempo
 chrono = { version = "0.4", features = ["serde"] }
 
+# Diretórios do sistema
+dirs = "5.0"
+
 # Processamento de imagens
 image = "0.24"
 imageproc = "0.23"

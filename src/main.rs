@@ -20,14 +20,16 @@ fn main() -> AppResult<()> {
     
     let mut processor = ImageProcessor::new(&args.image_path)?;
     
-    // Define caminho de saída se fornecido
-    if let Some(output_path) = args.output_path {
-        processor.set_output_path(output_path);
+    // Se o usuário especificou uma saída personalizada, usa ela
+    if let Some(custom_output) = args.output_path {
+        println!("📌 Usando saída personalizada: {:?}", custom_output);
+        processor.set_output_path(custom_output);
     }
+    // Caso contrário, usa a saída automática já configurada
     
     processor.process_activity_file(&args.activity_path)?;
     processor.save_result()?;
     
-    println!("Processo concluído com sucesso!");
+    println!("✅ Processo concluído com sucesso!");
     Ok(())
 }

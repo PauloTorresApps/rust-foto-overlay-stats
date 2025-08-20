@@ -91,7 +91,7 @@ run-debug: release ## Executa com informações de debug
 run-example: ## Executa um exemplo (requer arquivos de teste)
 	@echo "$(GREEN)Executando exemplo...$(NC)"
 	@if [ -f "exemplo.jpg" ] && [ -f "exemplo.tcx" ]; then \
-		cargo run -- --image-path exemplo.jpg --activity-path exemplo.tcx; \
+		cargo run -- -i exemplo.jpg -f exemplo.tcx resultado_exemplo.png; \
 	else \
 		echo "$(RED)Erro: Arquivos exemplo.jpg e exemplo.tcx necessários$(NC)"; \
 		echo "$(YELLOW)Coloque seus arquivos de teste na raiz do projeto$(NC)"; \
@@ -100,7 +100,7 @@ run-example: ## Executa um exemplo (requer arquivos de teste)
 run-fit-example: ## Executa exemplo com arquivo FIT
 	@echo "$(GREEN)Executando exemplo FIT...$(NC)"
 	@if [ -f "exemplo.jpg" ] && [ -f "exemplo.fit" ]; then \
-		cargo run -- --image-path exemplo.jpg --activity-path exemplo.fit --output-path resultado_fit.png; \
+		cargo run -- -i exemplo.jpg -f exemplo.fit resultado_fit.png; \
 	else \
 		echo "$(RED)Erro: Arquivos exemplo.jpg e exemplo.fit necessários$(NC)"; \
 		echo "$(YELLOW)Coloque seus arquivos de teste na raiz do projeto$(NC)"; \
