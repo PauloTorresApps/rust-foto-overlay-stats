@@ -1,5 +1,5 @@
 // ============================================================================
-// src/image_processor.rs - Processamento de imagens e overlay
+// src/image_processor.rs - Processamento de imagens e overlay (VERSÃO CORRIGIDA)
 // ============================================================================
 
 use image::{Rgba, RgbaImage, GenericImageView, imageops};
@@ -13,6 +13,23 @@ use crate::constants::*;
 use crate::error::{AppResult, AppError};
 use crate::parsers::{ActivityData, tcx, fit};
 
+/// Enum para diferentes tipos de linha de estatística
+#[derive(Debug, Clone)]
+enum StatLine {
+    Simple {
+        icon: &'static str,
+        text: String,
+        color: Rgba<u8>,
+    },
+    WithSubtext {
+        icon: &'static str,
+        main_text: String,
+        sub_text: String,
+        main_color: Rgba<u8>,
+        sub_color: Rgba<u8>,
+    },
+}
+
 /// Processador principal de imagens com overlay de estatísticas
 pub struct ImageProcessor {
     image: RgbaImage,
@@ -23,14 +40,25 @@ pub struct ImageProcessor {
     output_path: PathBuf,
 }
 
-/// Layout para posicionamento do overlay
+/// Layout para posicionamento do overlay com posições absolutas fixas
+#[derive(Debug)]
 struct OverlayLayout {
+    // Estatísticas
+    stats_x: u32,
+    stats_y: u32,
+    stats_width: u32,
+    stats_height: u32,
+    
+    // Marca d'água
+    watermark_x: u32,
+    watermark_y: u32,
+    watermark_width: u32,
+    watermark_height: u32,
+    
+    // Layout interno das estatísticas
     max_line_width: i32,
     icon_padding: i32,
     text_line_height: u32,
-    total_text_height: u32,
-    block_x_start: i32,
-    block_y_start: i32,
 }
 
 impl ImageProcessor {
@@ -133,32 +161,32 @@ impl ImageProcessor {
     fn add_overlay(&mut self, activity_data: &ActivityData) -> AppResult<()> {
         println!("📐 [DEBUG] Iniciando overlay - Dimensões atuais da imagem: {}x{}", self.width, self.height);
         
-        let font_scale = (self.height as f32 / 40.0).round();
+        // Calcula o tamanho da fonte baseado na menor dimensão da imagem
+        let font_scale = (self.height.min(self.width) as f32 / 40.0).round().max(12.0);
         let scale = Scale::uniform(font_scale);
         let shadow_offset = (font_scale / 15.0).round().max(1.0) as i32;
 
         println!("📐 [DEBUG] Font scale calculado: {}", font_scale);
         println!("📐 [DEBUG] Shadow offset: {}", shadow_offset);
 
-        // Criamos as linhas de estatísticas usando função estática
+        // Criamos as linhas de estatísticas
         let stats_lines = Self::build_stats_lines_static(activity_data);
         
-        // Calculamos o layout usando dados temporários
-        let layout = self.calculate_layout(&stats_lines, scale, font_scale);
+        // Calculamos o layout com posicionamento fixo
+        let layout = self.calculate_fixed_layout(&stats_lines, scale, font_scale)?;
         
-        println!("📐 [DEBUG] Layout calculado - max_width: {}, total_height: {}", 
-                 layout.max_line_width, layout.total_text_height);
+        println!("📐 [DEBUG] Layout calculado:");
+        println!("   Stats: {}x{} na posição ({}, {})", layout.stats_width, layout.stats_height, layout.stats_x, layout.stats_y);
+        println!("   Watermark: {}x{} na posição ({}, {})", layout.watermark_width, layout.watermark_height, layout.watermark_x, layout.watermark_y);
         
-        // Verificamos se é Garmin
+        // Verificamos se é Garmin e adiciona marca d'água primeiro
         let is_garmin = Self::is_garmin_device_static(&activity_data.device_name);
-
-        // Agora fazemos as operações mutáveis sem conflitos de borrow
         if is_garmin {
-            self.add_watermark(&layout)?;
+            self.add_watermark_fixed(&layout)?;
         }
 
         // Desenha as estatísticas
-        self.draw_stats(&stats_lines, &layout, scale, shadow_offset);
+        self.draw_stats_fixed(&stats_lines, &layout, scale, shadow_offset);
 
         println!("📐 [DEBUG] Overlay concluído - Dimensões finais da imagem: {}x{}", self.width, self.height);
 
@@ -166,47 +194,161 @@ impl ImageProcessor {
     }
 
     /// Constrói as linhas de estatísticas com ícones e cores (versão estática)
-    fn build_stats_lines_static(activity_data: &ActivityData) -> Vec<(&'static str, String, Rgba<u8>)> {
+    fn build_stats_lines_static(activity_data: &ActivityData) -> Vec<StatLine> {
         let start_time_local = activity_data.start_time.with_timezone(&Local);
         
         vec![
-            (ICON_TIME, activity_data.format_duration(), TIME_COLOR),
-            (ICON_FIRE, format!("{} kcal", activity_data.calories), CALORIES_COLOR),
-            (ICON_HEART, format!("{} avg", activity_data.avg_hr), HR_COLOR),
-            (ICON_HEART, format!("{} max", activity_data.max_hr), HR_COLOR),
-            (ICON_CALENDAR, start_time_local.format("%d/%m/%Y").to_string(), DATE_COLOR),
-            (ICON_DEVICE, activity_data.device_name.clone(), DEVICE_COLOR),
+            StatLine::Simple {
+                icon: ICON_TIME,
+                text: activity_data.format_duration(),
+                color: TIME_COLOR,
+            },
+            StatLine::Simple {
+                icon: ICON_FIRE,
+                text: format!("{} kcal", activity_data.calories),
+                color: CALORIES_COLOR,
+            },
+            StatLine::Simple {
+                icon: ICON_HEART,
+                text: format!("{} avg", activity_data.avg_hr),
+                color: HR_COLOR,
+            },
+            StatLine::Simple {
+                icon: ICON_HEART,
+                text: format!("{} max", activity_data.max_hr),
+                color: HR_COLOR,
+            },
+            StatLine::WithSubtext {
+                icon: ICON_CALENDAR,
+                main_text: start_time_local.format("%H:%M").to_string(),
+                sub_text: start_time_local.format("%d/%m/%Y").to_string(),
+                main_color: DATE_COLOR,
+                sub_color: Rgba([180u8, 180u8, 180u8, 255u8]), // Cor mais suave para a data
+            },
+            StatLine::Simple {
+                icon: ICON_DEVICE,
+                text: activity_data.device_name.clone(),
+                color: DEVICE_COLOR,
+            },
         ]
     }
 
-    /// Calcula o layout e posicionamento do overlay
-    fn calculate_layout(&self, stats_lines: &[(&'static str, String, Rgba<u8>)], scale: Scale, font_scale: f32) -> OverlayLayout {
+    /// Calcula o layout com posicionamento absolutamente fixo
+    fn calculate_fixed_layout(&self, stats_lines: &[StatLine], scale: Scale, font_scale: f32) -> AppResult<OverlayLayout> {
+        // Margens fixas a partir das bordas da imagem
+        const BOTTOM_MARGIN: u32 = 20;  // Distância da borda inferior
+        const RIGHT_MARGIN: u32 = 20;   // Distância da borda direita
+        const STATS_WATERMARK_GAP: u32 = 20; // Gap entre estatísticas e marca d'água
+
         let padding = (font_scale * 0.75).round() as u32;
         let icon_padding = (padding as f32 * 0.5).round() as i32;
         
-        // Calcula a largura máxima das linhas
+        // Calcula a largura máxima das linhas de estatísticas
         let mut max_line_width = 0;
-        for (icon, text, _) in stats_lines {
-            let (icon_width, _) = text_size(scale, &self.icon_font, icon);
-            let (text_width, _) = text_size(scale, &self.font, text);
-            let total_line_width = icon_width + icon_padding + text_width;
-            if total_line_width > max_line_width {
-                max_line_width = total_line_width;
+        let mut total_height = 0;
+        
+        for stat_line in stats_lines {
+            match stat_line {
+                StatLine::Simple { icon, text, .. } => {
+                    let (icon_width, _) = text_size(scale, &self.icon_font, icon);
+                    let (text_width, _) = text_size(scale, &self.font, text);
+                    let total_line_width = icon_width + icon_padding + text_width;
+                    if total_line_width > max_line_width {
+                        max_line_width = total_line_width;
+                    }
+                    total_height += font_scale as u32 + (padding / 2);
+                },
+                StatLine::WithSubtext { icon, main_text, sub_text, .. } => {
+                    let (icon_width, _) = text_size(scale, &self.icon_font, icon);
+                    let (main_text_width, _) = text_size(scale, &self.font, main_text);
+                    
+                    // Calcula a largura do subtexto com fonte menor
+                    let sub_scale = Scale::uniform(font_scale * 0.75);
+                    let (sub_text_width, _) = text_size(sub_scale, &self.font, sub_text);
+                    
+                    // A largura total é a maior entre texto principal e subtexto
+                    let max_text_width = main_text_width.max(sub_text_width);
+                    let total_line_width = icon_width + icon_padding + max_text_width;
+                    if total_line_width > max_line_width {
+                        max_line_width = total_line_width;
+                    }
+                    
+                    // Altura para linha principal + sublinha (com espaçamento menor)
+                    total_height += font_scale as u32 + (font_scale * 0.75) as u32 + (padding / 2);
+                }
             }
         }
 
-        let text_line_height = font_scale as u32 + (padding / 2);
-        let total_text_height = stats_lines.len() as u32 * text_line_height;
-        let margin = 4;
-        let stats_bottom_margin = 80; // Estatísticas ficam a 80px da borda inferior (50px + 30px)
+        let stats_height = total_height;
+        let stats_width = max_line_width as u32;
 
-        OverlayLayout {
+        // Calcula as dimensões da marca d'água (tentativa com imagem padrão)
+        let (watermark_width, watermark_height) = self.calculate_watermark_dimensions(stats_width)?;
+
+        // POSICIONAMENTO FIXO:
+        // 1. Marca d'água: sempre no canto inferior direito
+        let watermark_x = self.width.saturating_sub(watermark_width + RIGHT_MARGIN);
+        let watermark_y = self.height.saturating_sub(watermark_height + BOTTOM_MARGIN);
+
+        // 2. Estatísticas: sempre acima da marca d'água com gap fixo
+        let stats_x = self.width.saturating_sub(stats_width + RIGHT_MARGIN);
+        let stats_y = watermark_y.saturating_sub(stats_height + STATS_WATERMARK_GAP);
+
+        println!("📐 [LAYOUT DEBUG] Cálculos de posicionamento:");
+        println!("   Imagem: {}x{}", self.width, self.height);
+        println!("   Stats calculadas: {}x{}", stats_width, stats_height);
+        println!("   Watermark calculada: {}x{}", watermark_width, watermark_height);
+        println!("   Margens: bottom={}, right={}, gap={}", BOTTOM_MARGIN, RIGHT_MARGIN, STATS_WATERMARK_GAP);
+
+        Ok(OverlayLayout {
+            stats_x,
+            stats_y,
+            stats_width,
+            stats_height,
+            watermark_x,
+            watermark_y,
+            watermark_width,
+            watermark_height,
             max_line_width,
             icon_padding,
-            text_line_height,
-            total_text_height,
-            block_x_start: (self.width as i32) - max_line_width - (margin as i32),
-            block_y_start: (self.height - total_text_height - stats_bottom_margin) as i32,
+            text_line_height: font_scale as u32 + (padding / 2), // Mantém para compatibilidade
+        })
+    }
+
+    /// Calcula as dimensões da marca d'água baseado no tamanho das estatísticas
+    fn calculate_watermark_dimensions(&self, stats_width: u32) -> AppResult<(u32, u32)> {
+        // Tenta abrir uma das imagens de marca d'água para obter as proporções originais
+        let watermark_path = if std::path::Path::new(WATERMARK_WHITE_PATH).exists() {
+            WATERMARK_WHITE_PATH
+        } else if std::path::Path::new(WATERMARK_BLACK_PATH).exists() {
+            WATERMARK_BLACK_PATH
+        } else {
+            // Se não encontrar nenhuma marca d'água, usa dimensões padrão
+            println!("⚠️  [DEBUG] Nenhuma marca d'água encontrada, usando dimensões padrão");
+            return Ok((stats_width, stats_width / 4)); // Proporção 4:1
+        };
+
+        match image::open(watermark_path) {
+            Ok(img) => {
+                let (orig_w, orig_h) = img.dimensions();
+                println!("📐 [DEBUG] Marca d'água original: {}x{}", orig_w, orig_h);
+                
+                // A marca d'água terá a mesma largura que as estatísticas
+                let watermark_width = stats_width;
+                let watermark_height = if orig_w > 0 { 
+                    watermark_width * orig_h / orig_w 
+                } else { 
+                    watermark_width / 4 
+                };
+                
+                println!("📐 [DEBUG] Marca d'água redimensionada: {}x{}", watermark_width, watermark_height);
+                Ok((watermark_width, watermark_height))
+            },
+            Err(e) => {
+                println!("⚠️  [DEBUG] Erro ao abrir marca d'água {}: {}", watermark_path, e);
+                // Usa proporção padrão se não conseguir abrir
+                Ok((stats_width, stats_width / 4))
+            }
         }
     }
 
@@ -228,93 +370,34 @@ impl ImageProcessor {
         false
     }
 
-    /// Adiciona marca d'água para dispositivos Garmin (lógica original restaurada)
-    fn add_watermark(&mut self, layout: &OverlayLayout) -> AppResult<()> {
-        println!("🎯 [DEBUG] Iniciando processo de marca d'água");
-        println!("🎯 [DEBUG] Layout recebido: max_width={}, total_height={}", layout.max_line_width, layout.total_text_height);
-        
+    /// Adiciona marca d'água com posicionamento fixo
+    fn add_watermark_fixed(&mut self, layout: &OverlayLayout) -> AppResult<()> {
+        println!("🎯 [DEBUG] Iniciando processo de marca d'água com posicionamento fixo");
+        println!("🎯 [DEBUG] Posição da marca d'água: ({}, {})", layout.watermark_x, layout.watermark_y);
+        println!("🎯 [DEBUG] Dimensões da marca d'água: {}x{}", layout.watermark_width, layout.watermark_height);
+
         println!("Dispositivo Garmin detectado. Analisando fundo para a marca d'água.");
 
-        let temp_watermark_width = layout.max_line_width as u32;
-        println!("🎯 [DEBUG] Largura da marca d'água: {}", temp_watermark_width);
-
-        println!("🎯 [DEBUG] Tentando abrir: {}", WATERMARK_WHITE_PATH);
-        let (wm_orig_w, wm_orig_h) = match image::open(WATERMARK_WHITE_PATH) {
-            Ok(img) => {
-                let dims = img.dimensions();
-                println!("✅ [DEBUG] {} aberto com sucesso: {}x{}", WATERMARK_WHITE_PATH, dims.0, dims.1);
-                dims
-            },
-            Err(e) => {
-                println!("❌ [DEBUG] Erro ao abrir {}: {}", WATERMARK_WHITE_PATH, e);
-                println!("🎯 [DEBUG] Tentando abrir: {}", WATERMARK_BLACK_PATH);
-                match image::open(WATERMARK_BLACK_PATH) {
-                    Ok(img) => {
-                        let dims = img.dimensions();
-                        println!("✅ [DEBUG] {} aberto com sucesso: {}x{}", WATERMARK_BLACK_PATH, dims.0, dims.1);
-                        dims
-                    },
-                    Err(e2) => {
-                        println!("❌ [DEBUG] Erro ao abrir {}: {}", WATERMARK_BLACK_PATH, e2);
-                        println!("🚫 [DEBUG] NENHUMA marca d'água encontrada - retornando");
-                        (1, 1)
-                    }
-                }
-            }
-        };
-
-        println!("🎯 [DEBUG] Dimensões da marca d'água: {}x{}", wm_orig_w, wm_orig_h);
-
-        let watermark_height = if wm_orig_w > 0 { temp_watermark_width * wm_orig_h / wm_orig_w } else { 0 };
-        println!("🎯 [DEBUG] Altura calculada: {}", watermark_height);
-
-        if watermark_height == 0 {
-            println!("🚫 [DEBUG] Altura é 0 - saindo sem marca d'água");
-            return Ok(());
-        }
-
-        // AJUSTE: Posicionamento dentro da área visível da imagem
-        let margin_right = 5i32; // -10px (move para dentro da borda direita)
-        let watermark_bottom_margin = 10; // -10px (move para dentro da borda inferior)
-        
-        // As estatísticas já estão posicionadas corretamente pelo layout
-        let block_x_start = (self.width as i32) - (layout.max_line_width) - 20i32; // Mantém margin original para stats
-        
-        println!("🎯 [DEBUG] Posições calculadas: block_x={}", block_x_start);
-        
-        let watermark_x = (self.width as i32 - temp_watermark_width as i32 + margin_right) as u32;
-        // AJUSTE: Marca d'água fica próxima da borda inferior (valor negativo = mais próximo)
-        let watermark_y = (self.height as i32 - watermark_height as i32 + watermark_bottom_margin) as u32;
-
-        println!("🎯 [DEBUG] Posição final da marca d'água: x={}, y={}", watermark_x, watermark_y);
-        println!("🎯 [DEBUG] Dimensões da imagem: {}x{}", self.width, self.height);
-        println!("🎯 [DEBUG] Área da marca d'água: {}x{} na posição ({}, {})", temp_watermark_width, watermark_height, watermark_x, watermark_y);
-
-        // Verificação de bounds
-        if watermark_x >= self.width || watermark_y >= self.height {
-            println!("🚫 [DEBUG] Marca d'água fora dos limites da imagem!");
-            return Ok(());
-        }
-
+        // Análise da luminância da região onde a marca d'água será colocada
         let mut total_luminance = 0.0;
         let mut pixel_count = 0;
 
-        println!("🎯 [DEBUG] Analisando luminância da região: x={} a {}, y={} a {}", 
-                 watermark_x, watermark_x + temp_watermark_width, 
-                 watermark_y, watermark_y + watermark_height);
+        let end_x = (layout.watermark_x + layout.watermark_width).min(self.width);
+        let end_y = (layout.watermark_y + layout.watermark_height).min(self.height);
 
-        for x in watermark_x..(watermark_x + temp_watermark_width) {
-            for y in watermark_y..(watermark_y + watermark_height) {
-                if x < self.width && y < self.height {
-                    let pixel = self.image.get_pixel(x, y);
-                    let luminance = 0.2126 * (pixel[0] as f32) + 0.7152 * (pixel[1] as f32) + 0.0722 * (pixel[2] as f32);
-                    total_luminance += luminance;
-                    pixel_count += 1;
-                }
+        println!("🎯 [DEBUG] Analisando luminância da região: x={} a {}, y={} a {}", 
+                 layout.watermark_x, end_x, layout.watermark_y, end_y);
+
+        for x in layout.watermark_x..end_x {
+            for y in layout.watermark_y..end_y {
+                let pixel = self.image.get_pixel(x, y);
+                let luminance = 0.2126 * (pixel[0] as f32) + 0.7152 * (pixel[1] as f32) + 0.0722 * (pixel[2] as f32);
+                total_luminance += luminance;
+                pixel_count += 1;
             }
         }
 
-        let avg_luminance = if pixel_count > 0 { total_luminance / pixel_count as f32 } else { 0.0 };
+        let avg_luminance = if pixel_count > 0 { total_luminance / pixel_count as f32 } else { 128.0 };
         println!("🎯 [DEBUG] Luminância média: {:.1} (pixels analisados: {})", avg_luminance, pixel_count);
         
         let watermark_path_to_use = if avg_luminance < 128.0 {
@@ -332,22 +415,27 @@ impl ImageProcessor {
             let watermark_img = watermark_img_orig.to_rgba8();
             let resized_watermark = imageops::resize(
                 &watermark_img,
-                temp_watermark_width,
-                watermark_height,
+                layout.watermark_width,
+                layout.watermark_height,
                 imageops::FilterType::Lanczos3
             );
             
-            println!("🎯 [DEBUG] Marca d'água redimensionada para: {}x{}", temp_watermark_width, watermark_height);
-            println!("🎯 [DEBUG] Aplicando overlay na posição: ({}, {})", watermark_x, watermark_y);
+            println!("🎯 [DEBUG] Marca d'água redimensionada para: {}x{}", layout.watermark_width, layout.watermark_height);
+            println!("🎯 [DEBUG] Aplicando overlay na posição: ({}, {})", layout.watermark_x, layout.watermark_y);
             
-            imageops::overlay(
-                &mut self.image,
-                &resized_watermark,
-                watermark_x as i64,
-                watermark_y as i64
-            );
-            
-            println!("✅ Marca d'água adicionada com sucesso!");
+            // Verifica bounds antes de aplicar
+            if layout.watermark_x < self.width && layout.watermark_y < self.height {
+                imageops::overlay(
+                    &mut self.image,
+                    &resized_watermark,
+                    layout.watermark_x as i64,
+                    layout.watermark_y as i64
+                );
+                
+                println!("✅ Marca d'água adicionada com sucesso!");
+            } else {
+                println!("🚫 [DEBUG] Marca d'água fora dos limites da imagem!");
+            }
         } else {
             println!("❌ [DEBUG] FALHA ao abrir marca d'água final: {}", watermark_path_to_use);
             println!("Aviso: Imagem da marca d'água não encontrada em '{}'.", watermark_path_to_use);
@@ -356,30 +444,91 @@ impl ImageProcessor {
         Ok(())
     }
 
-    /// Desenha as estatísticas na imagem
-    fn draw_stats(&mut self, stats_lines: &[(&'static str, String, Rgba<u8>)], layout: &OverlayLayout, scale: Scale, shadow_offset: i32) {
-        let mut y_pos = layout.block_y_start;
+    /// Desenha as estatísticas na imagem com posicionamento fixo
+    fn draw_stats_fixed(&mut self, stats_lines: &[StatLine], layout: &OverlayLayout, scale: Scale, shadow_offset: i32) {
+        println!("📝 [DEBUG] Desenhando estatísticas na posição: ({}, {})", layout.stats_x, layout.stats_y);
+        
+        let mut y_pos = layout.stats_y as i32;
+        let font_scale = scale.x; // Obtém o valor da escala
 
-        for (icon, text, icon_color) in stats_lines {
-            let (icon_width, _) = text_size(scale, &self.icon_font, icon);
-            let (text_width, _) = text_size(scale, &self.font, text);
-            
-            let current_line_width = icon_width + layout.icon_padding + text_width;
-            let line_x_start = layout.block_x_start + (layout.max_line_width - current_line_width);
+        for stat_line in stats_lines {
+            match stat_line {
+                StatLine::Simple { icon, text, color } => {
+                    let (icon_width, _) = text_size(scale, &self.icon_font, icon);
+                    let (text_width, _) = text_size(scale, &self.font, text);
+                    
+                    let current_line_width = icon_width + layout.icon_padding + text_width;
+                    
+                    // Alinhamento à direita: calcula posição x baseada na largura total das estatísticas
+                    let line_x_start = (layout.stats_x as i32) + (layout.max_line_width - current_line_width);
 
-            let icon_x = line_x_start;
-            let text_x = line_x_start + icon_width + layout.icon_padding;
+                    let icon_x = line_x_start;
+                    let text_x = line_x_start + icon_width + layout.icon_padding;
 
-            // Desenha sombra para melhor legibilidade
-            draw_text_mut(&mut self.image, SHADOW_COLOR, icon_x + shadow_offset, y_pos + shadow_offset, scale, &self.icon_font, icon);
-            draw_text_mut(&mut self.image, SHADOW_COLOR, text_x + shadow_offset, y_pos + shadow_offset, scale, &self.font, text);
+                    // Verifica bounds antes de desenhar
+                    if icon_x >= 0 && text_x >= 0 && y_pos >= 0 {
+                        // Desenha sombra para melhor legibilidade
+                        draw_text_mut(&mut self.image, SHADOW_COLOR, icon_x + shadow_offset, y_pos + shadow_offset, scale, &self.icon_font, icon);
+                        draw_text_mut(&mut self.image, SHADOW_COLOR, text_x + shadow_offset, y_pos + shadow_offset, scale, &self.font, text);
 
-            // Desenha texto principal
-            draw_text_mut(&mut self.image, *icon_color, icon_x, y_pos, scale, &self.icon_font, icon);
-            draw_text_mut(&mut self.image, TEXT_COLOR, text_x, y_pos, scale, &self.font, text);
-            
-            y_pos += layout.text_line_height as i32;
+                        // Desenha texto principal
+                        draw_text_mut(&mut self.image, *color, icon_x, y_pos, scale, &self.icon_font, icon);
+                        draw_text_mut(&mut self.image, TEXT_COLOR, text_x, y_pos, scale, &self.font, text);
+                    }
+                    
+                    y_pos += layout.text_line_height as i32;
+                },
+                StatLine::WithSubtext { icon, main_text, sub_text, main_color, sub_color } => {
+                    let (icon_width, _) = text_size(scale, &self.icon_font, icon);
+                    let (main_text_width, _) = text_size(scale, &self.font, main_text);
+                    
+                    // Escala menor para o subtexto
+                    let sub_scale = Scale::uniform(font_scale * 0.75);
+                    let (sub_text_width, _) = text_size(sub_scale, &self.font, sub_text);
+                    
+                    // Calcula a largura total considerando a maior largura entre textos
+                    let max_text_width = main_text_width.max(sub_text_width);
+                    let current_line_width = icon_width + layout.icon_padding + max_text_width;
+                    
+                    // Alinhamento à direita
+                    let line_x_start = (layout.stats_x as i32) + (layout.max_line_width - current_line_width);
+                    let icon_x = line_x_start;
+                    let main_text_x = line_x_start + icon_width + layout.icon_padding;
+                    
+                    // Posição do subtexto (alinhado com o texto principal)
+                    let sub_text_x = main_text_x;
+                    let sub_text_y = y_pos + (font_scale * 1.0) as i32; // Posicionado abaixo do texto principal
+
+                    // Verifica bounds antes de desenhar
+                    if icon_x >= 0 && main_text_x >= 0 && y_pos >= 0 {
+                        // === DESENHA ÍCONE ===
+                        // Sombra do ícone
+                        draw_text_mut(&mut self.image, SHADOW_COLOR, icon_x + shadow_offset, y_pos + shadow_offset, scale, &self.icon_font, icon);
+                        // Ícone principal
+                        draw_text_mut(&mut self.image, *main_color, icon_x, y_pos, scale, &self.icon_font, icon);
+                        
+                        // === DESENHA TEXTO PRINCIPAL (HORÁRIO) ===
+                        // Sombra do texto principal
+                        draw_text_mut(&mut self.image, SHADOW_COLOR, main_text_x + shadow_offset, y_pos + shadow_offset, scale, &self.font, main_text);
+                        // Texto principal
+                        draw_text_mut(&mut self.image, TEXT_COLOR, main_text_x, y_pos, scale, &self.font, main_text);
+                        
+                        // === DESENHA SUBTEXTO (DATA) ===
+                        if sub_text_y >= 0 {
+                            // Sombra do subtexto
+                            draw_text_mut(&mut self.image, SHADOW_COLOR, sub_text_x + shadow_offset, sub_text_y + shadow_offset, sub_scale, &self.font, sub_text);
+                            // Subtexto
+                            draw_text_mut(&mut self.image, *sub_color, sub_text_x, sub_text_y, sub_scale, &self.font, sub_text);
+                        }
+                    }
+                    
+                    // Incrementa Y para a próxima linha (considerando altura do texto principal + subtexto)
+                    y_pos += (font_scale * 1.75) as i32 + (layout.text_line_height as i32 / 4);
+                }
+            }
         }
+        
+        println!("✅ [DEBUG] Estatísticas desenhadas com sucesso!");
     }
 
     /// Salva a imagem processada
